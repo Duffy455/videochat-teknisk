@@ -144,16 +144,28 @@ export function createMatchStore(room, onState) {
   };
 }
 
-export async function createVideoRoom({ room, peerId, role, side, onStatus, onParticipantState }) {
-  const mediaSupport = getMediaSupportStatus();
-  if (!mediaSupport.ok) {
-    throw new Error(mediaSupport.message);
+export async function createVideoRoom({
+  room,
+  peerId,
+  role,
+  side,
+  publishMedia = true,
+  onStatus,
+  onParticipantState,
+}) {
+  let localStream = null;
+  if (publishMedia) {
+    const mediaSupport = getMediaSupportStatus();
+    if (!mediaSupport.ok) {
+      throw new Error(mediaSupport.message);
+    }
+
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   }
 
-  const localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   const mediaState = {
-    mic: true,
-    cam: true,
+    mic: Boolean(localStream),
+    cam: Boolean(localStream),
     speaker: true,
   };
 
@@ -212,12 +224,13 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
     peers.set(targetId, connection);
     serverParticipants.set(targetId, metadata);
 
-    localStream.getTracks().forEach((track) => connection.addTrack(track, localStream));
+    if (localStream) {
+      localStream.getTracks().forEach((track) => connection.addTrack(track, localStream));
+    }
 
     connection.ontrack = (event) => {
       const [stream] = event.streams;
       remoteStreams.set(targetId, stream);
-      onStatus?.(`Tilkoblet ${metadata.side || metadata.role}`);
       emitParticipants();
     };
 
@@ -400,6 +413,10 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
       return { ...mediaState };
     },
     toggleMic() {
+      if (!localStream) {
+        return false;
+      }
+
       mediaState.mic = !mediaState.mic;
       localStream.getAudioTracks().forEach((track) => {
         track.enabled = mediaState.mic;
@@ -407,6 +424,10 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
       return mediaState.mic;
     },
     toggleCam() {
+      if (!localStream) {
+        return false;
+      }
+
       mediaState.cam = !mediaState.cam;
       localStream.getVideoTracks().forEach((track) => {
         track.enabled = mediaState.cam;
@@ -423,7 +444,7 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
     disconnect() {
       peers.forEach((peer) => peer.close());
       peers.clear();
-      localStream.getTracks().forEach((track) => track.stop());
+      localStream?.getTracks().forEach((track) => track.stop());
       signaling.close();
     },
   };

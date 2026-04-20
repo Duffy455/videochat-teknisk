@@ -3,7 +3,6 @@ import {
   createMatchStore,
   createPeerId,
   createVideoRoom,
-  getMediaSupportStatus,
   getRoomFromUrl,
   renderMatchState,
   renderStageStreams,
@@ -60,11 +59,6 @@ window.addEventListener("unhandledrejection", (event) => {
 
 setRoomLabel(roomLabel, activeRoom);
 
-const mediaSupport = getMediaSupportStatus();
-if (!mediaSupport.ok) {
-  showAdminError(mediaSupport.message);
-}
-
 function updateAdminControls() {
   if (adminRole) {
     adminRole.textContent = playerConnected ? "Bruker er inne" : "Venter på bruker";
@@ -82,10 +76,6 @@ function updateAdminControls() {
 }
 
 async function connectAdminRoom() {
-  if (!mediaSupport.ok) {
-    return;
-  }
-
   adminState.textContent = "Kobler til";
   adminCopy.textContent = `Starter admin i room ${activeRoom}.`;
 
@@ -95,6 +85,7 @@ async function connectAdminRoom() {
       peerId,
       role: "admin",
       side: "admin",
+      publishMedia: false,
       onStatus(message) {
         adminState.textContent = "Tilkoblet";
         adminCopy.textContent = message;
@@ -111,6 +102,11 @@ async function connectAdminRoom() {
           roomApi,
         });
       },
+    });
+
+    document.querySelectorAll('[data-control="mic"], [data-control="cam"]').forEach((button) => {
+      button.disabled = true;
+      button.setAttribute("aria-pressed", "false");
     });
 
     if (!controlsBound) {
