@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Videochat romvisning" />
+    <title>Video Chat Room</title>
+    <link rel="stylesheet" href="./video.css" />
+  </head>
+  <body class="video-page-body">
+    <main class="video-page" data-countdown-style="digital">
+      <section class="video-shell" aria-label="Videochat rom">
+        <div class="auto-connect-status">
+          <span class="session-status" data-admin-state>Kobler til</span>
+          <span class="session-hint" data-admin-copy>Starter romvisning for admin.</span>
+          <span class="session-room" data-admin-room>Room: default-room</span>
+        </div>
+
+        <aside class="admin-panel" aria-label="Admin kontroll">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Admin</p>
+              <h1>Match Control</h1>
+            </div>
+          </div>
+
+          <div class="status-card">
+            <p class="status-title" data-admin-role>Venter på bruker</p>
+            <p class="status-copy" data-admin-side>Admin får motsatt side når bruker kobler seg til.</p>
+          </div>
+
+          <fieldset class="winner-choice">
+            <legend>Velg vinner før start</legend>
+            <label>
+              <input type="radio" name="preselect-winner" value="blue" disabled />
+              <span>Blue</span>
+            </label>
+            <label>
+              <input type="radio" name="preselect-winner" value="green" disabled />
+              <span>Green</span>
+            </label>
+          </fieldset>
+
+          <div class="admin-actions">
+            <button class="admin-button primary" type="button" data-action="start" disabled>Start countdown</button>
+            <button class="admin-button" type="button" data-action="blue-win" disabled>Blue wins</button>
+            <button class="admin-button" type="button" data-action="green-win" disabled>Green wins</button>
+            <button class="admin-button subtle" type="button" data-action="reset" disabled>Reset</button>
+          </div>
+        </aside>
+
+        <div class="video-stage">
+          <article class="video-panel video-panel--blue" aria-label="Side 1" data-slot="blue">
+            <div class="video-panel__screen">
+              <video class="video-feed" data-video="blue" autoplay playsinline muted></video>
+
+              <div class="video-panel__content">
+                <span class="video-panel__label">Side 1</span>
+                <span class="video-panel__state" data-status-copy="blue">Venter på spiller</span>
+              </div>
+
+              <div class="video-panel__placeholder" data-empty="blue">Ingen video ennå</div>
+            </div>
+
+            <div class="video-controls video-controls--left" aria-label="Kontroller for side 1">
+              <button type="button" class="icon-btn" aria-label="Mic side 1" data-control="mic" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <rect x="40" y="18" width="20" height="38" rx="10" fill="#444" />
+                  <path d="M32 50 Q32 68 50 68 Q68 68 68 50" fill="none" stroke="#444" stroke-width="6" />
+                  <line x1="50" y1="68" x2="50" y2="82" stroke="#444" stroke-width="6" />
+                  <line x1="38" y1="82" x2="62" y2="82" stroke="#444" stroke-width="6" />
+                </svg>
+              </button>
+
+              <button type="button" class="icon-btn" aria-label="Cam side 1" data-control="cam" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <rect x="22" y="30" width="56" height="36" rx="6" fill="#222" />
+                  <circle cx="50" cy="48" r="10" fill="#444" />
+                  <rect x="34" y="24" width="12" height="8" rx="2" fill="#222" />
+                </svg>
+              </button>
+
+              <button type="button" class="icon-btn" aria-label="Speaker side 1" data-control="speaker" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <polygon points="28,42 42,42 58,30 58,70 42,58 28,58" fill="#222" />
+                  <path d="M64 40 Q74 50 64 60" fill="none" stroke="#222" stroke-width="5" />
+                  <path d="M70 33 Q86 50 70 67" fill="none" stroke="#222" stroke-width="5" />
+                </svg>
+              </button>
+            </div>
+          </article>
+
+          <article class="video-panel video-panel--green" aria-label="Side 2" data-slot="green">
+            <div class="video-panel__screen">
+              <video class="video-feed" data-video="green" autoplay playsinline muted></video>
+
+              <div class="video-panel__content">
+                <span class="video-panel__label">Side 2</span>
+                <span class="video-panel__state" data-status-copy="green">Venter på spiller</span>
+              </div>
+
+              <div class="video-panel__placeholder" data-empty="green">Ingen video ennå</div>
+            </div>
+
+            <div class="video-controls video-controls--right" aria-label="Kontroller for side 2">
+              <button type="button" class="icon-btn" aria-label="Mic side 2" data-control="mic" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <rect x="40" y="18" width="20" height="38" rx="10" fill="#444" />
+                  <path d="M32 50 Q32 68 50 68 Q68 68 68 50" fill="none" stroke="#444" stroke-width="6" />
+                  <line x1="50" y1="68" x2="50" y2="82" stroke="#444" stroke-width="6" />
+                  <line x1="38" y1="82" x2="62" y2="82" stroke="#444" stroke-width="6" />
+                </svg>
+              </button>
+
+              <button type="button" class="icon-btn active-side" aria-label="Cam side 2" data-control="cam" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <rect x="22" y="30" width="56" height="36" rx="6" fill="#222" />
+                  <circle cx="50" cy="48" r="10" fill="#444" />
+                  <rect x="34" y="24" width="12" height="8" rx="2" fill="#222" />
+                </svg>
+              </button>
+
+              <button type="button" class="icon-btn active-side" aria-label="Speaker side 2" data-control="speaker" aria-pressed="true">
+                <svg class="icon-svg" viewBox="0 0 100 100" aria-hidden="true">
+                  <polygon points="28,42 42,42 58,30 58,70 42,58 28,58" fill="#222" />
+                  <path d="M64 40 Q74 50 64 60" fill="none" stroke="#222" stroke-width="5" />
+                  <path d="M70 33 Q86 50 70 67" fill="none" stroke="#222" stroke-width="5" />
+                </svg>
+              </button>
+            </div>
+          </article>
+
+          <div class="video-center">
+            <button type="button" class="video-countdown" data-countdown>30</button>
+            <div class="video-winner hidden" data-winner-banner>Winner</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./video-admin.js"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Admin inngang til videochat" />
+    <title>Admin Join</title>
+    <link rel="stylesheet" href="./video.css" />
+  </head>
+  <body class="video-page-body">
+    <main class="join-page">
+      <section class="join-card" aria-label="Admin inngang">
+        <p class="join-eyebrow">Video Admin</p>
+        <h1 class="join-title">Koble admin til room</h1>
+        <p class="join-copy">Skriv inn room-navn og gå videre til adminrommet.</p>
+
+        <form class="admin-join-form" data-admin-join-form>
+          <label class="join-field">
+            <span>Room</span>
+            <input type="text" name="room" value="default-room" autocomplete="off" />
+          </label>
+
+          <button class="join-button join-button--admin" type="submit">Open Admin Room</button>
+        </form>
+      </section>
+    </main>
+
+    <script type="module" src="./video-admin-join.js"></script>
+  </body>
+</html>
