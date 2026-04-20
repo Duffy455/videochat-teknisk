@@ -31,12 +31,26 @@ export function setRoomLabel(element, room) {
   }
 }
 
-export function createMatchStore(room, onState) {
-  const key = `video-match-state:${room}`;
-  const channel = new BroadcastChannel(`video-match:${room}`);
-  let countdownTimer = null;
+function getSocketUrl() {
+  if (!window.location.host) {
+    throw new Error("Siden må kjøres via server, ikke som lokal fil.");
+  }
 
-  const defaultState = {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}`;
+}
+
+function sendSocketMessage(socket, payload) {
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload));
+  }
+}
+
+export function createMatchStore(room, onState) {
+  let socket;
+  let disposed = false;
+
+  let state = {
     countdown: 30,
     phase: "idle",
     winner: null,
@@ -44,89 +58,88 @@ export function createMatchStore(room, onState) {
     updatedAt: Date.now(),
   };
 
-  const read = () => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? { ...defaultState, ...JSON.parse(raw) } : defaultState;
-    } catch {
-      return defaultState;
-    }
-  };
-
-  let state = read();
-
   const notify = () => onState?.(state);
 
-  const write = (next) => {
-    state = { ...state, ...next, updatedAt: Date.now() };
-    localStorage.setItem(key, JSON.stringify(state));
-    channel.postMessage({ type: "match-state", state });
+  const connect = () =>
+    new Promise((resolve, reject) => {
+      try {
+        socket = new WebSocket(getSocketUrl());
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      socket.addEventListener("open", () => {
+        sendSocketMessage(socket, {
+          type: "match-join",
+          room,
+        });
+        resolve();
+      });
+
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type !== "match-state") {
+          return;
+        }
+
+        state = {
+          countdown: 30,
+          phase: "idle",
+          winner: null,
+          preselectedWinner: null,
+          updatedAt: Date.now(),
+          ...message.state,
+        };
+        notify();
+      });
+
+      socket.addEventListener("error", () => {
+        if (!disposed) {
+          reject(new Error("Kunne ikke koble til kampserveren."));
+        }
+      });
+    });
+
+  connect().catch(() => {
+    state = {
+      ...state,
+      phase: "offline",
+    };
     notify();
-  };
-
-  channel.onmessage = (event) => {
-    if (event.data?.type === "match-state") {
-      state = { ...defaultState, ...event.data.state };
-      notify();
-    }
-  };
-
-  window.addEventListener("storage", (event) => {
-    if (event.key === key && event.newValue) {
-      state = { ...defaultState, ...JSON.parse(event.newValue) };
-      notify();
-    }
   });
 
   notify();
 
+  const dispatch = (payload) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    sendSocketMessage(socket, {
+      type: "match-action",
+      room,
+      ...payload,
+    });
+  };
+
   return {
     getState: () => state,
     setPreselectedWinner(winner) {
-      write({ preselectedWinner: winner, winner: null, phase: "ready" });
+      dispatch({ action: "set-preselected", winner });
     },
     setWinner(winner) {
-      if (countdownTimer) {
-        window.clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-      write({ winner, phase: "winner" });
+      dispatch({ action: "set-winner", winner });
     },
     reset() {
-      if (countdownTimer) {
-        window.clearInterval(countdownTimer);
-        countdownTimer = null;
-      }
-      write({ countdown: 30, phase: "idle", winner: null, preselectedWinner: null });
+      dispatch({ action: "reset" });
     },
     startCountdown(seconds = 30) {
-      if (countdownTimer) {
-        window.clearInterval(countdownTimer);
-      }
-      write({ countdown: seconds, phase: "countdown", winner: null });
-      let remaining = seconds;
-      countdownTimer = window.setInterval(() => {
-        remaining -= 1;
-        if (remaining <= 0) {
-          window.clearInterval(countdownTimer);
-          countdownTimer = null;
-          const winner = this.getState().preselectedWinner;
-          write({
-            countdown: 0,
-            phase: winner ? "winner" : "done",
-            winner: winner || null,
-          });
-          return;
-        }
-
-        write({ countdown: remaining, phase: "countdown" });
-      }, 1000);
+      dispatch({ action: "start-countdown", seconds });
     },
     dispose() {
-      if (countdownTimer) {
-        window.clearInterval(countdownTimer);
-      }
-      channel.close();
+      disposed = true;
+      socket?.close();
     },
   };
 }
@@ -143,16 +156,51 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
     cam: true,
     speaker: true,
   };
-  const signaling = new BroadcastChannel(`video-signal:${room}`);
+
+  const signaling = new WebSocket(getSocketUrl());
   const peers = new Map();
   const remoteStreams = new Map();
+  const serverParticipants = new Map();
   const pendingIceCandidates = new Map();
 
-  const participants = new Map();
-  participants.set(peerId, { role, side, joinedAt: Date.now() });
+  const emitParticipants = () => {
+    const participants = [
+      {
+        id: peerId,
+        role,
+        side,
+        stream: localStream,
+      },
+      ...Array.from(serverParticipants.entries()).map(([id, value]) => ({
+        id,
+        role: value.role,
+        side: value.side,
+        stream: remoteStreams.get(id) || null,
+      })),
+    ];
 
-  const notifyParticipants = () => {
-    onParticipantState?.(Array.from(participants.entries()).map(([id, value]) => ({ id, ...value })));
+    onParticipantState?.(participants);
+  };
+
+  const removePeer = (targetId) => {
+    peers.get(targetId)?.close();
+    peers.delete(targetId);
+    remoteStreams.delete(targetId);
+    serverParticipants.delete(targetId);
+    pendingIceCandidates.delete(targetId);
+    emitParticipants();
+  };
+
+  const flushPendingIceCandidates = async (targetId, connection) => {
+    const pending = pendingIceCandidates.get(targetId) || [];
+    for (const candidate of pending) {
+      try {
+        await connection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        onStatus?.("Venter på nettverkskandidat");
+      }
+    }
+    pendingIceCandidates.delete(targetId);
   };
 
   const makePeerConnection = (targetId, metadata, isOfferer) => {
@@ -162,8 +210,7 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
 
     const connection = new RTCPeerConnection(rtcConfig);
     peers.set(targetId, connection);
-    participants.set(targetId, metadata);
-    notifyParticipants();
+    serverParticipants.set(targetId, metadata);
 
     localStream.getTracks().forEach((track) => connection.addTrack(track, localStream));
 
@@ -171,32 +218,27 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
       const [stream] = event.streams;
       remoteStreams.set(targetId, stream);
       onStatus?.(`Tilkoblet ${metadata.side || metadata.role}`);
-      onParticipantState?.(
-        Array.from(participants.entries()).map(([id, value]) => ({
-          id,
-          ...value,
-          stream: id === peerId ? localStream : remoteStreams.get(id) || null,
-        })),
-      );
+      emitParticipants();
     };
 
     connection.onicecandidate = (event) => {
-      if (event.candidate) {
-        signaling.postMessage({
-          type: "ice-candidate",
-          from: peerId,
-          to: targetId,
-          candidate: event.candidate.toJSON(),
-        });
+      if (!event.candidate) {
+        return;
       }
+
+      sendSocketMessage(signaling, {
+        type: "signal",
+        room,
+        from: peerId,
+        to: targetId,
+        signalType: "ice-candidate",
+        candidate: event.candidate.toJSON(),
+      });
     };
 
     connection.onconnectionstatechange = () => {
       if (["failed", "disconnected", "closed"].includes(connection.connectionState)) {
-        peers.delete(targetId);
-        remoteStreams.delete(targetId);
-        participants.delete(targetId);
-        notifyParticipants();
+        removePeer(targetId);
       }
     };
 
@@ -205,124 +247,155 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
         .createOffer()
         .then((offer) => connection.setLocalDescription(offer))
         .then(() => {
-          signaling.postMessage({
-            type: "offer",
+          sendSocketMessage(signaling, {
+            type: "signal",
+            room,
             from: peerId,
             to: targetId,
+            signalType: "offer",
             description: {
               type: connection.localDescription?.type,
               sdp: connection.localDescription?.sdp,
             },
             metadata: { role, side },
           });
+        })
+        .catch(() => {
+          onStatus?.("Kunne ikke starte video-forbindelse.");
         });
     }
 
+    emitParticipants();
     return connection;
   };
 
-  const flushPendingIceCandidates = async (targetId, connection) => {
-    const pending = pendingIceCandidates.get(targetId) || [];
-    for (const candidate of pending) {
-      try {
-        await connection.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch {
-        onStatus?.("Ventet pÃ¥ nettverkskandidat");
+  const syncParticipants = (participants) => {
+    const nextIds = new Set();
+
+    participants.forEach((participant) => {
+      if (participant.peerId === peerId) {
+        return;
       }
-    }
-    pendingIceCandidates.delete(targetId);
+
+      nextIds.add(participant.peerId);
+      serverParticipants.set(participant.peerId, participant);
+    });
+
+    Array.from(serverParticipants.keys()).forEach((targetId) => {
+      if (!nextIds.has(targetId)) {
+        removePeer(targetId);
+      }
+    });
+
+    participants.forEach((participant) => {
+      if (participant.peerId === peerId) {
+        return;
+      }
+
+      if (!peers.has(participant.peerId) && peerId < participant.peerId) {
+        makePeerConnection(participant.peerId, participant, true);
+      }
+    });
+
+    emitParticipants();
   };
 
-  const emitParticipants = () => {
-    onParticipantState?.(
-      Array.from(participants.entries()).map(([id, value]) => ({
-        id,
-        ...value,
-        stream: id === peerId ? localStream : remoteStreams.get(id) || null,
-      })),
-    );
-  };
-
-  signaling.onmessage = async (event) => {
-    const message = event.data;
-    if (!message || (message.to && message.to !== peerId) || message.from === peerId) {
-      return;
-    }
-
-    if (message.type === "join") {
-      const connection = makePeerConnection(message.from, message.metadata, true);
-      participants.set(message.from, message.metadata);
-      emitParticipants();
-      return connection;
-    }
-
-    if (message.type === "offer") {
-      const connection = makePeerConnection(message.from, message.metadata, false);
-      await connection.setRemoteDescription(new RTCSessionDescription(message.description));
-      await flushPendingIceCandidates(message.from, connection);
-      const answer = await connection.createAnswer();
-      await connection.setLocalDescription(answer);
-      signaling.postMessage({
-        type: "answer",
-        from: peerId,
-        to: message.from,
-        description: {
-          type: connection.localDescription?.type,
-          sdp: connection.localDescription?.sdp,
-        },
+  await new Promise((resolve, reject) => {
+    signaling.addEventListener("open", () => {
+      sendSocketMessage(signaling, {
+        type: "video-join",
+        room,
+        peerId,
+        role,
+        side,
       });
-      return;
-    }
+      onStatus?.("Media er klar");
+      resolve();
+    });
 
-    if (message.type === "answer") {
-      const connection = peers.get(message.from);
-      if (connection) {
+    signaling.addEventListener("message", async (event) => {
+      const message = JSON.parse(event.data);
+
+      if (message.type === "video-welcome" || message.type === "participants-update") {
+        syncParticipants(message.participants || []);
+        return;
+      }
+
+      if (message.type !== "signal" || message.to !== peerId) {
+        return;
+      }
+
+      if (message.signalType === "offer") {
+        const connection = makePeerConnection(message.from, message.metadata || {}, false);
         await connection.setRemoteDescription(new RTCSessionDescription(message.description));
         await flushPendingIceCandidates(message.from, connection);
+        const answer = await connection.createAnswer();
+        await connection.setLocalDescription(answer);
+        sendSocketMessage(signaling, {
+          type: "signal",
+          room,
+          from: peerId,
+          to: message.from,
+          signalType: "answer",
+          description: {
+            type: connection.localDescription?.type,
+            sdp: connection.localDescription?.sdp,
+          },
+        });
+        return;
       }
-      return;
-    }
 
-    if (message.type === "ice-candidate") {
-      const connection = peers.get(message.from);
-      if (connection) {
-        if (connection.remoteDescription) {
-          await connection.addIceCandidate(new RTCIceCandidate(message.candidate));
-        } else {
-          const pending = pendingIceCandidates.get(message.from) || [];
-          pending.push(message.candidate);
-          pendingIceCandidates.set(message.from, pending);
+      if (message.signalType === "answer") {
+        const connection = peers.get(message.from);
+        if (!connection) {
+          return;
         }
+
+        await connection.setRemoteDescription(new RTCSessionDescription(message.description));
+        await flushPendingIceCandidates(message.from, connection);
+        return;
       }
-      return;
-    }
 
-    if (message.type === "leave") {
-      peers.get(message.from)?.close();
-      peers.delete(message.from);
-      remoteStreams.delete(message.from);
-      participants.delete(message.from);
-      emitParticipants();
-    }
-  };
+      if (message.signalType === "ice-candidate") {
+        const connection = peers.get(message.from);
+        if (connection?.remoteDescription) {
+          await connection.addIceCandidate(new RTCIceCandidate(message.candidate));
+          return;
+        }
 
-  signaling.postMessage({
-    type: "join",
-    from: peerId,
-    metadata: { role, side },
+        const pending = pendingIceCandidates.get(message.from) || [];
+        pending.push(message.candidate);
+        pendingIceCandidates.set(message.from, pending);
+      }
+    });
+
+    signaling.addEventListener("error", () => {
+      reject(new Error("Kunne ikke koble til videoserveren."));
+    });
+
+    signaling.addEventListener("close", () => {
+      onStatus?.("Forbindelsen til serveren ble brutt");
+    });
   });
 
   emitParticipants();
-  onStatus?.("Media er klar");
 
   return {
     localStream,
-    getParticipants: () =>
-      Array.from(participants.entries()).map(([id, value]) => ({
+    getParticipants: () => [
+      {
+        id: peerId,
+        role,
+        side,
+        stream: localStream,
+      },
+      ...Array.from(serverParticipants.entries()).map(([id, value]) => ({
         id,
-        ...value,
-        stream: id === peerId ? localStream : remoteStreams.get(id) || null,
+        role: value.role,
+        side: value.side,
+        stream: remoteStreams.get(id) || null,
       })),
+    ],
     getMediaState() {
       return { ...mediaState };
     },
@@ -348,7 +421,6 @@ export async function createVideoRoom({ room, peerId, role, side, onStatus, onPa
       return mediaState.speaker;
     },
     disconnect() {
-      signaling.postMessage({ type: "leave", from: peerId });
       peers.forEach((peer) => peer.close());
       peers.clear();
       localStream.getTracks().forEach((track) => track.stop());
@@ -366,6 +438,7 @@ export function bindMediaButtons({ root = document, roomApi, remoteVideos }) {
     button.addEventListener("click", () => {
       const control = button.dataset.control;
       let enabled = true;
+
       if (control === "mic") {
         enabled = roomApi.toggleMic();
       }
@@ -399,6 +472,7 @@ export function renderStageStreams({ sideElements, participants, currentSide, ro
       if (video.srcObject !== participant.stream) {
         video.srcObject = participant.stream;
       }
+
       const isLocalParticipant = participant.side === currentSide;
       video.muted = isLocalParticipant ? true : !mediaState.speaker;
       empty.classList.add("hidden");
