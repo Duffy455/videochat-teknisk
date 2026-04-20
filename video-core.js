@@ -46,6 +46,26 @@ function sendSocketMessage(socket, payload) {
   }
 }
 
+function shouldInitiateConnection(selfRole, selfPeerId, participant) {
+  if (selfRole === "player" && participant.role === "admin") {
+    return true;
+  }
+
+  if (selfRole === "admin" && participant.role === "player") {
+    return false;
+  }
+
+  if (selfRole === "player" && participant.role === "player") {
+    return selfPeerId < participant.peerId;
+  }
+
+  if (selfRole === "admin" && participant.role === "admin") {
+    return selfPeerId < participant.peerId;
+  }
+
+  return false;
+}
+
 export function createMatchStore(room, onState) {
   let socket;
   let disposed = false;
@@ -305,7 +325,7 @@ export async function createVideoRoom({
         return;
       }
 
-      if (!peers.has(participant.peerId) && peerId < participant.peerId) {
+      if (!peers.has(participant.peerId) && shouldInitiateConnection(role, peerId, participant)) {
         makePeerConnection(participant.peerId, participant, true);
       }
     });
