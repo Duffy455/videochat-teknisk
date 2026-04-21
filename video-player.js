@@ -20,6 +20,7 @@ const connectionState = document.querySelector("[data-connection-state]");
 const connectionCopy = document.querySelector("[data-connection-copy]");
 const countdownEl = document.querySelector("[data-countdown]");
 const winnerBanner = document.querySelector("[data-winner-banner]");
+const entryOverlay = document.querySelector("[data-entry-overlay]");
 
 const sideElements = {
   blue: {
@@ -49,8 +50,15 @@ function showConnectionError(message) {
   connectionCopy.textContent = message;
 }
 
+function setSelectedSide(side) {
+  selectedSide = side === "green" ? "green" : "blue";
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.set("side", selectedSide);
+  window.history.replaceState({}, "", nextUrl);
+}
+
 connectionState.textContent = "Laster";
-connectionCopy.textContent = "Starter video-siden.";
+connectionCopy.textContent = "Velg side for å starte.";
 
 window.addEventListener("error", (event) => {
   showConnectionError(event.message || "JavaScript-feil på siden.");
@@ -126,12 +134,27 @@ async function connectSelectedSide() {
 
     connectionState.textContent = "Tilkoblet";
     connectionCopy.textContent = `Du er koblet til som ${selectedSide}.`;
+    entryOverlay?.classList.add("hidden");
   } catch (error) {
     showConnectionError(error?.message || "Kunne ikke starte kamera og mikrofon.");
   }
 }
 
-connectSelectedSide();
+document.querySelectorAll("[data-side-select]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setSelectedSide(button.dataset.sideSelect || "blue");
+    connectSelectedSide();
+  });
+});
+
+if (initialSide === "blue" || initialSide === "green") {
+  entryOverlay?.classList.add("hidden");
+  setSelectedSide(initialSide);
+  connectSelectedSide();
+} else {
+  connectionState.textContent = "Velg side";
+  connectionCopy.textContent = "Trykk Blue eller Green for å koble til.";
+}
 
 window.addEventListener("beforeunload", () => {
   roomApi?.disconnect();

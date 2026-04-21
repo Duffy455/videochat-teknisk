@@ -69,6 +69,8 @@ function shouldInitiateConnection(selfRole, selfPeerId, participant) {
 export function createMatchStore(room, onState) {
   let socket;
   let disposed = false;
+  let isConnected = false;
+  const pendingActions = [];
 
   let state = {
     countdown: 30,
@@ -90,10 +92,14 @@ export function createMatchStore(room, onState) {
       }
 
       socket.addEventListener("open", () => {
+        isConnected = true;
         sendSocketMessage(socket, {
           type: "match-join",
           room,
         });
+        while (pendingActions.length > 0) {
+          sendSocketMessage(socket, pendingActions.shift());
+        }
         resolve();
       });
 
@@ -119,6 +125,10 @@ export function createMatchStore(room, onState) {
           reject(new Error("Kunne ikke koble til kampserveren."));
         }
       });
+
+      socket.addEventListener("close", () => {
+        isConnected = false;
+      });
     });
 
   connect().catch(() => {
@@ -132,15 +142,22 @@ export function createMatchStore(room, onState) {
   notify();
 
   const dispatch = (payload) => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    sendSocketMessage(socket, {
+    const message = {
       type: "match-action",
       room,
       ...payload,
-    });
+    };
+
+    if (!socket) {
+      return;
+    }
+
+    if (!isConnected || socket.readyState !== WebSocket.OPEN) {
+      pendingActions.push(message);
+      return;
+    }
+
+    sendSocketMessage(socket, message);
   };
 
   return {

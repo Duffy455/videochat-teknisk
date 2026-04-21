@@ -30,6 +30,31 @@ body {
   padding: 24px;
 }
 
+.entry-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 7, 14, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.entry-overlay.hidden {
+  display: none;
+}
+
+.entry-card {
+  width: min(520px, 100%);
+  padding: 34px 30px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 28px;
+  background: rgba(4, 10, 18, 0.92);
+  box-shadow: 0 24px 44px rgba(0, 0, 0, 0.34);
+  text-align: center;
+}
+
 .join-card {
   width: min(520px, 100%);
   padding: 34px 30px;
@@ -401,13 +426,14 @@ body {
 
 .video-center {
   position: absolute;
-  top: 76%;
+  top: 74%;
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 20;
   display: flex;
   flex-direction: column;
   align-items: center;
+  pointer-events: none;
 }
 
 .video-countdown {
@@ -425,6 +451,7 @@ body {
     0 0 10px rgba(108, 255, 245, 0.65),
     0 0 22px rgba(24, 168, 255, 0.36),
     0 0 44px rgba(23, 240, 126, 0.18);
+  pointer-events: none;
 }
 
 .video-countdown::before,
@@ -666,9 +693,13 @@ body {
   }
 
   .video-center {
-    position: static;
-    transform: none;
-    padding: 10px 20px 30px;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: auto;
+    padding: 0;
+    z-index: 70;
   }
 
   .player-panel,
@@ -684,5 +715,9 @@ body {
     right: 18px;
     width: auto;
     transform: none;
+  }
+
+  .video-countdown {
+    font-size: clamp(3.4rem, 18vw, 5.6rem);
   }
 }
