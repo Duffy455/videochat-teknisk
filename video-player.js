@@ -87,6 +87,14 @@ function lockOpponentControls() {
   });
 }
 
+function resolvePlayerDisplaySide(participant) {
+  if (participant.role === "admin") {
+    return selectedSide === "blue" ? "green" : "blue";
+  }
+
+  return participant.side;
+}
+
 async function connectSelectedSide() {
   if (!mediaSupport.ok) {
     return;
@@ -111,6 +119,8 @@ async function connectSelectedSide() {
           participants,
           currentSide: selectedSide,
           roomApi,
+          selfPeerId: peerId,
+          resolveDisplaySide: resolvePlayerDisplaySide,
         });
       },
     });
@@ -120,6 +130,8 @@ async function connectSelectedSide() {
       participants: roomApi.getParticipants(),
       currentSide: selectedSide,
       roomApi,
+      selfPeerId: peerId,
+      resolveDisplaySide: resolvePlayerDisplaySide,
     });
 
     if (!controlsBound) {

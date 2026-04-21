@@ -514,7 +514,14 @@ export function bindMediaButtons({ root = document, roomApi, remoteVideos }) {
   });
 }
 
-export function renderStageStreams({ sideElements, participants, currentSide, roomApi }) {
+export function renderStageStreams({
+  sideElements,
+  participants,
+  currentSide,
+  roomApi,
+  selfPeerId = null,
+  resolveDisplaySide = null,
+}) {
   const mediaState = roomApi?.getMediaState?.() || { speaker: true };
 
   ["blue", "green"].forEach((side) => {
@@ -524,17 +531,20 @@ export function renderStageStreams({ sideElements, participants, currentSide, ro
     }
 
     const { video, empty, copy } = slot;
-    const participant = participants.find((entry) => entry.side === side && entry.stream);
+    const participant = participants.find((entry) => {
+      const displaySide = resolveDisplaySide ? resolveDisplaySide(entry) : entry.side;
+      return displaySide === side && entry.stream;
+    });
 
     if (participant?.stream) {
       if (video.srcObject !== participant.stream) {
         video.srcObject = participant.stream;
       }
 
-      const isLocalParticipant = participant.side === currentSide;
+      const isLocalParticipant = selfPeerId ? participant.id === selfPeerId : participant.side === currentSide;
       video.muted = isLocalParticipant ? true : !mediaState.speaker;
       empty.classList.add("hidden");
-      copy.textContent = participant.side === currentSide ? "Du er tilkoblet" : "Spiller tilkoblet";
+      copy.textContent = isLocalParticipant ? "Du er tilkoblet" : "Spiller tilkoblet";
     } else {
       video.srcObject = null;
       empty.classList.remove("hidden");

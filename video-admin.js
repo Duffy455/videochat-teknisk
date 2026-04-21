@@ -36,6 +36,15 @@ let roomApi;
 let controlsBound = false;
 let playerConnected = false;
 let adminAssignedSide = null;
+
+function resolveAdminDisplaySide(participant) {
+  if (participant.role === "admin") {
+    return adminAssignedSide;
+  }
+
+  return participant.side;
+}
+
 const matchStore = createMatchStore(activeRoom, (state) => {
   renderMatchState({ state, countdownEl, bannerEl: winnerBanner });
 });
@@ -85,7 +94,7 @@ async function connectAdminRoom() {
       peerId,
       role: "admin",
       side: "admin",
-      publishMedia: false,
+      publishMedia: true,
       onStatus(message) {
         adminState.textContent = "Tilkoblet";
         adminCopy.textContent = message;
@@ -98,15 +107,12 @@ async function connectAdminRoom() {
         renderStageStreams({
           sideElements,
           participants,
-          currentSide: null,
+          currentSide: adminAssignedSide,
           roomApi,
+          selfPeerId: peerId,
+          resolveDisplaySide: resolveAdminDisplaySide,
         });
       },
-    });
-
-    document.querySelectorAll('[data-control="mic"], [data-control="cam"]').forEach((button) => {
-      button.disabled = true;
-      button.setAttribute("aria-pressed", "false");
     });
 
     if (!controlsBound) {
@@ -120,8 +126,10 @@ async function connectAdminRoom() {
     renderStageStreams({
       sideElements,
       participants: roomApi.getParticipants(),
-      currentSide: null,
+      currentSide: adminAssignedSide,
       roomApi,
+      selfPeerId: peerId,
+      resolveDisplaySide: resolveAdminDisplaySide,
     });
 
     adminState.textContent = "Tilkoblet";

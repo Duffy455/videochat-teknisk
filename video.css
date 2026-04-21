@@ -158,6 +158,10 @@ body {
   box-sizing: border-box;
 }
 
+.video-page--admin .video-shell {
+  padding-right: min(500px, 34vw);
+}
+
 .admin-toggle {
   position: fixed;
   top: 18px;
@@ -708,6 +712,10 @@ body {
     left: 18px;
     right: 18px;
     width: auto;
+  }
+
+  .video-page--admin .video-shell {
+    padding-right: 0;
   }
 
   .auto-connect-status {
