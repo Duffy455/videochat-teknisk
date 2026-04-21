@@ -42,7 +42,7 @@ let roomApi;
 let controlsBound = false;
 
 const matchStore = createMatchStore(room, (state) => {
-  renderMatchState({ state, countdownEl, bannerEl: winnerBanner });
+  renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: false });
 });
 
 function showConnectionError(message) {
@@ -95,9 +95,27 @@ function resolvePlayerDisplaySide(participant) {
   return participant.side;
 }
 
+function clearPlayerStage() {
+  Object.values(sideElements).forEach(({ video, empty, copy }) => {
+    if (video) {
+      video.srcObject = null;
+    }
+    empty?.classList.remove("hidden");
+    if (copy) {
+      copy.textContent = "Venter på tilkobling";
+    }
+  });
+}
+
 async function connectSelectedSide() {
   if (!mediaSupport.ok) {
     return;
+  }
+
+  if (roomApi) {
+    roomApi.disconnect();
+    roomApi = null;
+    clearPlayerStage();
   }
 
   connectionState.textContent = "Kobler til";

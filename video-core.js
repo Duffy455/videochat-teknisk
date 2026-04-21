@@ -559,7 +559,7 @@ export function renderStageStreams({
   }
 }
 
-export function renderMatchState({ state, countdownEl, bannerEl }) {
+export function renderMatchState({ state, countdownEl, bannerEl, showPreselected = false }) {
   countdownEl.textContent = String(state.countdown ?? 30);
 
   if (state.winner) {
@@ -569,7 +569,7 @@ export function renderMatchState({ state, countdownEl, bannerEl }) {
     return;
   }
 
-  if (state.preselectedWinner && state.phase === "ready") {
+  if (showPreselected && state.preselectedWinner && state.phase === "ready") {
     bannerEl.textContent = `Preselected: ${capitalize(state.preselectedWinner)}`;
     bannerEl.classList.remove("hidden");
     bannerEl.style.color = state.preselectedWinner === "blue" ? "#89daff" : "#9dffd5";

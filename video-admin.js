@@ -46,7 +46,7 @@ function resolveAdminDisplaySide(participant) {
 }
 
 const matchStore = createMatchStore(activeRoom, (state) => {
-  renderMatchState({ state, countdownEl, bannerEl: winnerBanner });
+  renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: true });
 });
 
 function showAdminError(message) {
