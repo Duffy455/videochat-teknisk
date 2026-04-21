@@ -481,6 +481,12 @@ body {
   background: none;
 }
 
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  filter: grayscale(0.28);
+}
+
 .icon-btn::before {
   content: "";
   position: absolute;

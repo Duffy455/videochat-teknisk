@@ -66,6 +66,19 @@ if (!mediaSupport.ok) {
   showConnectionError(mediaSupport.message);
 }
 
+function lockOpponentControls() {
+  const lockedSide = selectedSide === "blue" ? "green" : "blue";
+
+  document.querySelectorAll(`[data-slot="${lockedSide}"] [data-control]`).forEach((button) => {
+    button.disabled = true;
+    button.setAttribute("aria-pressed", "false");
+  });
+
+  document.querySelectorAll(`[data-slot="${selectedSide}"] [data-control]`).forEach((button) => {
+    button.disabled = false;
+  });
+}
+
 async function connectSelectedSide() {
   if (!mediaSupport.ok) {
     return;
@@ -108,6 +121,8 @@ async function connectSelectedSide() {
       });
       controlsBound = true;
     }
+
+    lockOpponentControls();
 
     connectionState.textContent = "Tilkoblet";
     connectionCopy.textContent = `Du er koblet til som ${selectedSide}.`;
