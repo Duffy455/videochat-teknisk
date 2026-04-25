@@ -33,9 +33,65 @@ const sideElements = {
 };
 
 let roomApi;
+let latestParticipants = [];
 let controlsBound = false;
-let playerConnected = false;
+let currentAttemptId = 0;
 let adminAssignedSide = null;
+
+const matchStore = createMatchStore(activeRoom, (state) => {
+  renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: true });
+});
+
+function resetWinnerSelection() {
+  document.querySelectorAll('input[name="preselect-winner"]').forEach((radio) => {
+    radio.checked = false;
+  });
+}
+
+function getPlayerParticipant(participants) {
+  return participants.find((entry) => entry.role === "player");
+}
+
+function getAdminDisplaySide(participants) {
+  const player = getPlayerParticipant(participants);
+  if (!player) {
+    return null;
+  }
+
+  return player.side === "blue" ? "green" : "blue";
+}
+
+function updateAdminSummary(participants) {
+  const player = getPlayerParticipant(participants);
+  adminAssignedSide = getAdminDisplaySide(participants);
+
+  if (adminRole) {
+    adminRole.textContent = player ? "Bruker er inne" : "Venter på bruker";
+  }
+
+  if (adminSide) {
+    adminSide.textContent = player
+      ? `Bruker er på ${player.side}. Admin er på ${adminAssignedSide}.`
+      : "Admin får motsatt side når bruker kobler seg til.";
+  }
+
+  if (!player) {
+    adminState.textContent = "Venter";
+    adminCopy.textContent = "Admin er inne i rommet og venter på bruker.";
+    return;
+  }
+
+  adminState.textContent = "Klar";
+  adminCopy.textContent = "Begge er i rommet. Admin kan starte nedtelling.";
+}
+
+function updateAdminControls(participants) {
+  const hasPlayer = Boolean(getPlayerParticipant(participants));
+
+  document.querySelectorAll('[data-action], input[name="preselect-winner"]').forEach((element) => {
+    element.disabled = !hasPlayer;
+  });
+}
 
 function resolveAdminDisplaySide(participant) {
   if (participant.role === "admin") {
@@ -45,17 +101,110 @@ function resolveAdminDisplaySide(participant) {
   return participant.side;
 }
 
-const matchStore = createMatchStore(activeRoom, (state) => {
-  renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: true });
-});
+function refreshAdminStage() {
+  if (!roomApi) {
+    return;
+  }
+
+  renderStageStreams({
+    sideElements,
+    participants: latestParticipants,
+    roomApi,
+    selfPeerId: peerId,
+    selfDisplaySide: adminAssignedSide,
+    resolveDisplaySide: resolveAdminDisplaySide,
+  });
+}
+
+function applyParticipants(participants) {
+  latestParticipants = participants;
+  updateAdminSummary(participants);
+  updateAdminControls(participants);
+  refreshAdminStage();
+}
 
 function showAdminError(message) {
   adminState.textContent = "Ikke tilkoblet";
   adminCopy.textContent = message;
 }
 
-adminState.textContent = "Laster";
-adminCopy.textContent = "Starter admin-siden.";
+async function connectAdminRoom() {
+  currentAttemptId += 1;
+  const attemptId = currentAttemptId;
+
+  adminState.textContent = "Kobler til";
+  adminCopy.textContent = `Kobler admin til room ${activeRoom}.`;
+
+  if (roomApi) {
+    roomApi.disconnect();
+    roomApi = null;
+  }
+
+  latestParticipants = [];
+  adminAssignedSide = null;
+  updateAdminControls([]);
+
+  try {
+    let pendingRoomApi = null;
+
+    pendingRoomApi = await createVideoRoom({
+      room: activeRoom,
+      peerId,
+      role: "admin",
+      side: "admin",
+      publishMedia: true,
+      onStatus(message) {
+        if (attemptId !== currentAttemptId) {
+          return;
+        }
+
+        const player = getPlayerParticipant(latestParticipants);
+        if (!player) {
+          adminState.textContent = "Venter";
+          adminCopy.textContent = "Admin er koblet til. Venter på bruker.";
+          return;
+        }
+
+        adminState.textContent = "Tilkoblet";
+        adminCopy.textContent = message;
+      },
+      onParticipantState(participants) {
+        if (attemptId !== currentAttemptId) {
+          return;
+        }
+
+        latestParticipants = participants;
+        if (roomApi || pendingRoomApi) {
+          applyParticipants(participants);
+        }
+      },
+    });
+
+    if (attemptId !== currentAttemptId) {
+      pendingRoomApi.disconnect();
+      return;
+    }
+
+    roomApi = pendingRoomApi;
+
+    if (!controlsBound) {
+      bindMediaButtons({
+        roomApi,
+        getSelfSide: () => adminAssignedSide,
+        onChange: () => refreshAdminStage(),
+      });
+      controlsBound = true;
+    }
+
+    applyParticipants(latestParticipants.length > 0 ? latestParticipants : roomApi.getParticipants());
+  } catch (error) {
+    if (attemptId !== currentAttemptId) {
+      return;
+    }
+
+    showAdminError(error?.message || "Kunne ikke starte admin media.");
+  }
+}
 
 window.addEventListener("error", (event) => {
   showAdminError(event.message || "JavaScript-feil på siden.");
@@ -67,78 +216,9 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 setRoomLabel(roomLabel, activeRoom);
-
-function updateAdminControls() {
-  if (adminRole) {
-    adminRole.textContent = playerConnected ? "Bruker er inne" : "Venter på bruker";
-  }
-
-  if (adminSide) {
-    adminSide.textContent = adminAssignedSide
-      ? `Admin har side ${adminAssignedSide}.`
-      : "Admin får motsatt side når bruker kobler seg til.";
-  }
-
-  document.querySelectorAll('[data-action], input[name="preselect-winner"]').forEach((element) => {
-    element.disabled = !playerConnected;
-  });
-}
-
-async function connectAdminRoom() {
-  adminState.textContent = "Kobler til";
-  adminCopy.textContent = `Starter admin i room ${activeRoom}.`;
-
-  try {
-    roomApi = await createVideoRoom({
-      room: activeRoom,
-      peerId,
-      role: "admin",
-      side: "admin",
-      publishMedia: true,
-      onStatus(message) {
-        adminState.textContent = "Tilkoblet";
-        adminCopy.textContent = message;
-      },
-      onParticipantState(participants) {
-        const player = participants.find((entry) => entry.role === "player");
-        playerConnected = Boolean(player);
-        adminAssignedSide = player ? (player.side === "blue" ? "green" : "blue") : null;
-        updateAdminControls();
-        renderStageStreams({
-          sideElements,
-          participants,
-          currentSide: adminAssignedSide,
-          roomApi,
-          selfPeerId: peerId,
-          resolveDisplaySide: resolveAdminDisplaySide,
-        });
-      },
-    });
-
-    if (!controlsBound) {
-      bindMediaButtons({
-        roomApi,
-        remoteVideos: [sideElements.blue.video, sideElements.green.video],
-      });
-      controlsBound = true;
-    }
-
-    renderStageStreams({
-      sideElements,
-      participants: roomApi.getParticipants(),
-      currentSide: adminAssignedSide,
-      roomApi,
-      selfPeerId: peerId,
-      resolveDisplaySide: resolveAdminDisplaySide,
-    });
-
-    adminState.textContent = "Tilkoblet";
-    adminCopy.textContent = `Admin er koblet til room ${activeRoom}.`;
-    updateAdminControls();
-  } catch (error) {
-    showAdminError(error?.message || "Kunne ikke starte admin media.");
-  }
-}
+resetWinnerSelection();
+updateAdminControls([]);
+connectAdminRoom();
 
 document.querySelectorAll('input[name="preselect-winner"]').forEach((radio) => {
   radio.addEventListener("change", () => {
@@ -173,16 +253,13 @@ document.querySelectorAll("[data-action]").forEach((button) => {
 
     if (action === "reset") {
       matchStore.reset();
-      document.querySelectorAll('input[name="preselect-winner"]').forEach((radio) => {
-        radio.checked = false;
-      });
+      resetWinnerSelection();
     }
   });
 });
 
-connectAdminRoom();
-
 window.addEventListener("beforeunload", () => {
+  currentAttemptId += 1;
   roomApi?.disconnect();
   matchStore.dispose();
 });

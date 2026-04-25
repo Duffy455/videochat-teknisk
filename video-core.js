@@ -48,6 +48,16 @@ function sendSocketMessage(socket, payload) {
   }
 }
 
+function createDefaultMatchState() {
+  return {
+    countdown: 30,
+    phase: "idle",
+    winner: null,
+    preselectedWinner: null,
+    updatedAt: Date.now(),
+  };
+}
+
 function shouldInitiateConnection(selfRole, selfPeerId, participant) {
   if (selfRole === "player" && participant.role === "admin") {
     return true;
@@ -57,15 +67,7 @@ function shouldInitiateConnection(selfRole, selfPeerId, participant) {
     return false;
   }
 
-  if (selfRole === "player" && participant.role === "player") {
-    return selfPeerId < participant.peerId;
-  }
-
-  if (selfRole === "admin" && participant.role === "admin") {
-    return selfPeerId < participant.peerId;
-  }
-
-  return false;
+  return selfPeerId < participant.peerId;
 }
 
 async function requestLocalMedia() {
@@ -84,8 +86,8 @@ async function requestLocalMedia() {
   try {
     return await Promise.race([mediaPromise, timeoutPromise]);
   } catch (error) {
-    const message = String(error?.message || error || "");
     const errorName = error?.name || "";
+    const message = String(error?.message || error || "");
 
     if (errorName === "NotAllowedError" || /denied|permission/i.test(message)) {
       throw new Error("Kamera/mikrofon ble blokkert. Tillat tilgang i nettleseren og prøv igjen.");
@@ -108,14 +110,7 @@ export function createMatchStore(room, onState) {
   let disposed = false;
   let isConnected = false;
   const pendingActions = [];
-
-  let state = {
-    countdown: 30,
-    phase: "idle",
-    winner: null,
-    preselectedWinner: null,
-    updatedAt: Date.now(),
-  };
+  let state = createDefaultMatchState();
 
   const notify = () => onState?.(state);
 
@@ -130,13 +125,12 @@ export function createMatchStore(room, onState) {
 
       socket.addEventListener("open", () => {
         isConnected = true;
-        sendSocketMessage(socket, {
-          type: "match-join",
-          room,
-        });
+        sendSocketMessage(socket, { type: "match-join", room });
+
         while (pendingActions.length > 0) {
           sendSocketMessage(socket, pendingActions.shift());
         }
+
         resolve();
       });
 
@@ -147,11 +141,7 @@ export function createMatchStore(room, onState) {
         }
 
         state = {
-          countdown: 30,
-          phase: "idle",
-          winner: null,
-          preselectedWinner: null,
-          updatedAt: Date.now(),
+          ...createDefaultMatchState(),
           ...message.state,
         };
         notify();
@@ -240,7 +230,11 @@ export async function createVideoRoom({
   const mediaState = {
     mic: Boolean(localStream),
     cam: Boolean(localStream),
-    speaker: true,
+  };
+
+  const panelState = {
+    blue: { speaker: true, video: true },
+    green: { speaker: true, video: true },
   };
 
   const signaling = new WebSocket(getSocketUrl());
@@ -283,7 +277,7 @@ export async function createVideoRoom({
       try {
         await connection.addIceCandidate(new RTCIceCandidate(candidate));
       } catch {
-        onStatus?.("Venter på nettverkskandidat");
+        onStatus?.("Venter på nettverkskandidat.");
       }
     }
     pendingIceCandidates.delete(targetId);
@@ -396,7 +390,7 @@ export async function createVideoRoom({
         role,
         side,
       });
-      onStatus?.("Media er klar");
+      onStatus?.("Media er klar.");
       resolve();
     });
 
@@ -461,7 +455,7 @@ export async function createVideoRoom({
     });
 
     signaling.addEventListener("close", () => {
-      onStatus?.("Forbindelsen til serveren ble brutt");
+      onStatus?.("Forbindelsen til serveren ble brutt.");
     });
   });
 
@@ -486,6 +480,9 @@ export async function createVideoRoom({
     getMediaState() {
       return { ...mediaState };
     },
+    getPanelState(sideName) {
+      return { ...(panelState[sideName] || { speaker: true, video: true }) };
+    },
     toggleMic() {
       if (!localStream) {
         return false;
@@ -508,12 +505,21 @@ export async function createVideoRoom({
       });
       return mediaState.cam;
     },
-    toggleSpeaker(videos) {
-      mediaState.speaker = !mediaState.speaker;
-      videos.forEach((video) => {
-        video.muted = !mediaState.speaker;
-      });
-      return mediaState.speaker;
+    togglePanelSpeaker(sideName) {
+      if (!panelState[sideName]) {
+        return true;
+      }
+
+      panelState[sideName].speaker = !panelState[sideName].speaker;
+      return panelState[sideName].speaker;
+    },
+    togglePanelVideo(sideName) {
+      if (!panelState[sideName]) {
+        return true;
+      }
+
+      panelState[sideName].video = !panelState[sideName].video;
+      return panelState[sideName].video;
     },
     disconnect() {
       peers.forEach((peer) => peer.close());
@@ -524,29 +530,38 @@ export async function createVideoRoom({
   };
 }
 
-export function createPeerId() {
-  return `peer-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-export function bindMediaButtons({ root = document, roomApi, remoteVideos }) {
-  root.querySelectorAll("[data-control]").forEach((button) => {
+export function bindMediaButtons({ root = document, roomApi, getSelfSide, onChange }) {
+  root.querySelectorAll("[data-slot] [data-control]").forEach((button) => {
     button.addEventListener("click", () => {
+      const slot = button.closest("[data-slot]")?.dataset.slot;
       const control = button.dataset.control;
-      let enabled = true;
+      const selfSide = getSelfSide?.();
+      const isSelfSlot = slot && selfSide && slot === selfSide;
+
+      if (!slot || !control) {
+        return;
+      }
 
       if (control === "mic") {
-        enabled = roomApi.toggleMic();
-      }
-      if (control === "cam") {
-        enabled = roomApi.toggleCam();
-      }
-      if (control === "speaker") {
-        enabled = roomApi.toggleSpeaker(remoteVideos);
+        if (!isSelfSlot) {
+          return;
+        }
+        roomApi.toggleMic();
       }
 
-      root.querySelectorAll(`[data-control="${control}"]`).forEach((matchingButton) => {
-        matchingButton.setAttribute("aria-pressed", String(enabled));
-      });
+      if (control === "cam") {
+        if (isSelfSlot) {
+          roomApi.toggleCam();
+        } else {
+          roomApi.togglePanelVideo(slot);
+        }
+      }
+
+      if (control === "speaker") {
+        roomApi.togglePanelSpeaker(slot);
+      }
+
+      onChange?.();
     });
   });
 }
@@ -554,46 +569,88 @@ export function bindMediaButtons({ root = document, roomApi, remoteVideos }) {
 export function renderStageStreams({
   sideElements,
   participants,
-  currentSide,
   roomApi,
   selfPeerId = null,
+  selfDisplaySide = null,
   resolveDisplaySide = null,
 }) {
-  const mediaState = roomApi?.getMediaState?.() || { speaker: true };
-
-  ["blue", "green"].forEach((side) => {
-    const slot = sideElements[side];
+  ["blue", "green"].forEach((sideName) => {
+    const slot = sideElements[sideName];
     if (!slot) {
       return;
     }
 
     const { video, empty, copy } = slot;
+    const panelState = roomApi?.getPanelState(sideName) || { speaker: true, video: true };
     const participant = participants.find((entry) => {
       const displaySide = resolveDisplaySide ? resolveDisplaySide(entry) : entry.side;
-      return displaySide === side && entry.stream;
+      return displaySide === sideName && entry.stream;
     });
 
-    if (participant?.stream) {
+    const isLocalParticipant = participant ? participant.id === selfPeerId : false;
+    const hasVisibleVideo = Boolean(participant?.stream && panelState.video);
+
+    if (hasVisibleVideo) {
       if (video.srcObject !== participant.stream) {
         video.srcObject = participant.stream;
       }
-
-      const isLocalParticipant = selfPeerId ? participant.id === selfPeerId : participant.side === currentSide;
-      video.muted = isLocalParticipant ? true : !mediaState.speaker;
-      empty.classList.add("hidden");
-      copy.textContent = isLocalParticipant ? "Du er tilkoblet" : "Spiller tilkoblet";
+      video.muted = isLocalParticipant ? true : !panelState.speaker;
+      empty?.classList.add("hidden");
     } else {
       video.srcObject = null;
-      empty.classList.remove("hidden");
-      copy.textContent = "Venter på tilkobling";
+      empty?.classList.remove("hidden");
     }
-  });
 
-  if (roomApi) {
-    document.querySelectorAll(".icon-btn").forEach((button) => {
-      button.classList.toggle("active-side", button.getAttribute("aria-pressed") === "true");
+    if (copy) {
+      if (!participant) {
+        copy.textContent = "Venter på deltaker";
+      } else if (isLocalParticipant) {
+        copy.textContent = "Du er tilkoblet";
+      } else {
+        copy.textContent = "Deltaker tilkoblet";
+      }
+    }
+
+    if (empty) {
+      if (!participant) {
+        empty.textContent = "Ingen deltaker ennå";
+      } else if (!panelState.video) {
+        empty.textContent = "Kamera skjult";
+      } else {
+        empty.textContent = "Ingen video ennå";
+      }
+    }
+
+    const controlsRoot = document.querySelector(`[data-slot="${sideName}"]`);
+    if (!controlsRoot) {
+      return;
+    }
+
+    const mediaState = roomApi?.getMediaState?.() || { mic: false, cam: false };
+    const isSelfSlot = sideName === selfDisplaySide;
+
+    controlsRoot.querySelectorAll("[data-control]").forEach((button) => {
+      const control = button.dataset.control;
+      let enabled = false;
+      let disabled = false;
+
+      if (control === "mic") {
+        enabled = isSelfSlot && mediaState.mic;
+        disabled = !isSelfSlot;
+      }
+
+      if (control === "cam") {
+        enabled = isSelfSlot ? mediaState.cam : panelState.video;
+      }
+
+      if (control === "speaker") {
+        enabled = panelState.speaker;
+      }
+
+      button.disabled = disabled;
+      button.setAttribute("aria-pressed", String(enabled));
     });
-  }
+  });
 }
 
 export function renderMatchState({ state, countdownEl, bannerEl, showPreselected = false }) {

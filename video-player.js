@@ -42,27 +42,16 @@ setRoomLabel(roomLabel, room);
 
 let selectedSide = initialSide === "green" ? "green" : "blue";
 let roomApi;
+let latestParticipants = [];
 let controlsBound = false;
 let isConnecting = false;
 let currentAttemptId = 0;
-let permissionHintTimer = null;
 
 const matchStore = createMatchStore(room, (state) => {
   renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: false });
 });
 
-function capitalize(value) {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
-}
-
-function clearPermissionHintTimer() {
-  if (permissionHintTimer) {
-    window.clearTimeout(permissionHintTimer);
-    permissionHintTimer = null;
-  }
-}
-
-function setOverlayContent(title, copy) {
+function updateOverlay(title, copy) {
   if (overlayTitle) {
     overlayTitle.textContent = title;
   }
@@ -72,18 +61,8 @@ function setOverlayContent(title, copy) {
   }
 }
 
-function resetOverlayContent() {
-  setOverlayContent("Velg side", "Trykk på Blue eller Green for å koble deg til rommet.");
-}
-
-function showConnectionError(message) {
-  clearPermissionHintTimer();
-  connectionState.textContent = "Ikke tilkoblet";
-  connectionCopy.textContent = message;
-  resetOverlayContent();
-  entryOverlay?.classList.remove("hidden");
-  isConnecting = false;
-  updateSideButtons();
+function resetOverlay() {
+  updateOverlay("Velg side", "Trykk på Blue eller Green for å koble deg til rommet.");
 }
 
 function updateSideButtons() {
@@ -102,91 +81,64 @@ function setSelectedSide(side) {
   updateSideButtons();
 }
 
-connectionState.textContent = "Laster";
-connectionCopy.textContent = "Velg side for å starte.";
-
-window.addEventListener("error", (event) => {
-  showConnectionError(event.message || "JavaScript-feil på siden.");
-});
-
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason?.message || event.reason || "Ukjent feil under lasting.";
-  showConnectionError(String(reason));
-});
-
-const mediaSupport = getMediaSupportStatus();
-const canUseMedia = mediaSupport.ok;
-if (!mediaSupport.ok) {
-  showConnectionError(mediaSupport.message);
-}
-
-function lockOpponentControls() {
-  const lockedSide = selectedSide === "blue" ? "green" : "blue";
-
-  document.querySelectorAll(`[data-slot="${lockedSide}"] [data-control]`).forEach((button) => {
-    button.disabled = true;
-    button.setAttribute("aria-pressed", "false");
-  });
-
-  document.querySelectorAll(`[data-slot="${selectedSide}"] [data-control]`).forEach((button) => {
-    button.disabled = false;
-  });
-}
-
-function resetPlayerControls() {
-  document.querySelectorAll("[data-slot] [data-control]").forEach((button) => {
-    button.disabled = true;
-    button.setAttribute("aria-pressed", "false");
-  });
-}
-
-function resolvePlayerDisplaySide(participant) {
-  if (participant.role === "admin") {
-    return selectedSide === "blue" ? "green" : "blue";
+function refreshStage() {
+  if (!roomApi) {
+    return;
   }
 
-  return participant.side;
+  renderStageStreams({
+    sideElements,
+    participants: latestParticipants,
+    roomApi,
+    selfPeerId: peerId,
+    selfDisplaySide: selectedSide,
+    resolveDisplaySide(entry) {
+      if (entry.role === "admin") {
+        return selectedSide === "blue" ? "green" : "blue";
+      }
+
+      return entry.side;
+    },
+  });
 }
 
-function clearPlayerStage() {
-  Object.values(sideElements).forEach(({ video, empty, copy }) => {
-    if (video) {
-      video.srcObject = null;
-    }
+function updateParticipantStatus(participants) {
+  const adminParticipant = participants.find((entry) => entry.role === "admin");
+  const waitingForAdmin = !adminParticipant;
 
-    empty?.classList.remove("hidden");
+  connectionState.textContent = waitingForAdmin ? "Venter" : "Klar";
+  connectionCopy.textContent = waitingForAdmin
+    ? "Du er inne i rommet og venter på admin."
+    : `Admin er tilkoblet. Du er på ${selectedSide}.`;
+}
 
-    if (copy) {
-      copy.textContent = "Venter på tilkobling";
-    }
-  });
+function showConnectionError(message) {
+  connectionState.textContent = "Ikke tilkoblet";
+  connectionCopy.textContent = message;
+  entryOverlay?.classList.remove("hidden");
+  resetOverlay();
+  isConnecting = false;
+  updateSideButtons();
 }
 
 function beginConnectionState() {
-  const readableSide = capitalize(selectedSide);
   connectionState.textContent = "Kobler til";
-  connectionCopy.textContent = `Starter ${selectedSide}-siden i room ${room}.`;
-  setOverlayContent(
-    `Kobler til ${readableSide}`,
-    "Tillat kamera og mikrofon i nettleseren. Hvis du ikke ser et spørsmål, sjekk adressefeltet."
+  connectionCopy.textContent = `Kobler ${selectedSide}-siden til room ${room}.`;
+  updateOverlay(
+    `Kobler til ${selectedSide === "blue" ? "Blue" : "Green"}`,
+    "Godkjenn kamera og mikrofon hvis nettleseren spør."
   );
   entryOverlay?.classList.remove("hidden");
-  clearPermissionHintTimer();
-  permissionHintTimer = window.setTimeout(() => {
-    if (!isConnecting) {
-      return;
-    }
-
-    connectionCopy.textContent = "Venter på svar fra kamera/mikrofon eller nettleseren.";
-    setOverlayContent(
-      `Venter på ${readableSide}`,
-      "Siden jobber fortsatt. Godkjenn kamera/mikrofon hvis nettleseren spør. Hvis ikke, last siden på nytt og prøv igjen."
-    );
-  }, 2500);
 }
 
 async function connectSelectedSide() {
-  if (!canUseMedia || isConnecting) {
+  if (isConnecting) {
+    return;
+  }
+
+  const mediaSupport = getMediaSupportStatus();
+  if (!mediaSupport.ok) {
+    showConnectionError(mediaSupport.message);
     return;
   }
 
@@ -194,15 +146,14 @@ async function connectSelectedSide() {
   const attemptId = currentAttemptId;
   isConnecting = true;
   updateSideButtons();
+  beginConnectionState();
 
   if (roomApi) {
     roomApi.disconnect();
     roomApi = null;
-    clearPlayerStage();
   }
 
-  resetPlayerControls();
-  beginConnectionState();
+  latestParticipants = [];
 
   try {
     let pendingRoomApi = null;
@@ -225,54 +176,34 @@ async function connectSelectedSide() {
           return;
         }
 
-        const activeRoomApi = roomApi || pendingRoomApi;
-        if (!activeRoomApi) {
-          return;
+        latestParticipants = participants;
+        if (roomApi || pendingRoomApi) {
+          refreshStage();
+          updateParticipantStatus(participants);
         }
-
-        renderStageStreams({
-          sideElements,
-          participants,
-          currentSide: selectedSide,
-          roomApi: activeRoomApi,
-          selfPeerId: peerId,
-          resolveDisplaySide: resolvePlayerDisplaySide,
-        });
       },
     });
 
-    const nextRoomApi = pendingRoomApi;
-
     if (attemptId !== currentAttemptId) {
-      nextRoomApi.disconnect();
+      pendingRoomApi.disconnect();
       return;
     }
 
-    roomApi = nextRoomApi;
-
-    renderStageStreams({
-      sideElements,
-      participants: roomApi.getParticipants(),
-      currentSide: selectedSide,
-      roomApi,
-      selfPeerId: peerId,
-      resolveDisplaySide: resolvePlayerDisplaySide,
-    });
+    roomApi = pendingRoomApi;
 
     if (!controlsBound) {
       bindMediaButtons({
         roomApi,
-        remoteVideos: [sideElements.blue.video, sideElements.green.video],
+        getSelfSide: () => selectedSide,
+        onChange: () => refreshStage(),
       });
       controlsBound = true;
     }
 
-    clearPermissionHintTimer();
-    lockOpponentControls();
-    connectionState.textContent = "Tilkoblet";
-    connectionCopy.textContent = `Du er koblet til som ${selectedSide}.`;
-    resetOverlayContent();
+    refreshStage();
+    updateParticipantStatus(latestParticipants.length > 0 ? latestParticipants : roomApi.getParticipants());
     entryOverlay?.classList.add("hidden");
+    resetOverlay();
     isConnecting = false;
     updateSideButtons();
   } catch (error) {
@@ -282,11 +213,19 @@ async function connectSelectedSide() {
 
     roomApi?.disconnect();
     roomApi = null;
-    clearPlayerStage();
-    resetPlayerControls();
+    latestParticipants = [];
     showConnectionError(error?.message || "Kunne ikke starte kamera og mikrofon.");
   }
 }
+
+window.addEventListener("error", (event) => {
+  showConnectionError(event.message || "JavaScript-feil på siden.");
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason?.message || event.reason || "Ukjent feil under lasting.";
+  showConnectionError(String(reason));
+});
 
 sideSelectButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -295,24 +234,17 @@ sideSelectButtons.forEach((button) => {
   });
 });
 
-resetPlayerControls();
+resetOverlay();
 updateSideButtons();
-resetOverlayContent();
+connectionState.textContent = "Velg side";
+connectionCopy.textContent = "Velg Blue eller Green for å gå inn i rommet.";
 
-if (!canUseMedia) {
-  sideSelectButtons.forEach((button) => {
-    button.disabled = true;
-  });
-} else if (initialSide === "blue" || initialSide === "green") {
+if (initialSide === "blue" || initialSide === "green") {
   setSelectedSide(initialSide);
   connectSelectedSide();
-} else {
-  connectionState.textContent = "Velg side";
-  connectionCopy.textContent = "Trykk Blue eller Green for å koble til.";
 }
 
 window.addEventListener("beforeunload", () => {
-  clearPermissionHintTimer();
   currentAttemptId += 1;
   roomApi?.disconnect();
   matchStore.dispose();
