@@ -24,7 +24,11 @@ const defaultMatchState = () => ({
 app.use(express.static(__dirname));
 
 app.get("/", (_req, res) => {
-  res.redirect("/video-join.html");
+  res.redirect("/video.html");
+});
+
+app.get("/video-join.html", (_req, res) => {
+  res.redirect("/video.html");
 });
 
 function getRoom(roomId) {

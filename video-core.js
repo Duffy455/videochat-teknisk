@@ -2,6 +2,8 @@ const rtcConfig = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
+const MEDIA_REQUEST_TIMEOUT_MS = 12000;
+
 export function getMediaSupportStatus() {
   if (!window.isSecureContext) {
     return {
@@ -64,6 +66,41 @@ function shouldInitiateConnection(selfRole, selfPeerId, participant) {
   }
 
   return false;
+}
+
+async function requestLocalMedia() {
+  const mediaPromise = navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
+  const timeoutPromise = new Promise((_, reject) => {
+    window.setTimeout(() => {
+      reject(
+        new Error(
+          "Kamera/mikrofon svarte ikke. Godkjenn tilgang i nettleseren, eller sjekk at siden kjører på https."
+        )
+      );
+    }, MEDIA_REQUEST_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([mediaPromise, timeoutPromise]);
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    const errorName = error?.name || "";
+
+    if (errorName === "NotAllowedError" || /denied|permission/i.test(message)) {
+      throw new Error("Kamera/mikrofon ble blokkert. Tillat tilgang i nettleseren og prøv igjen.");
+    }
+
+    if (errorName === "NotFoundError" || errorName === "DevicesNotFoundError") {
+      throw new Error("Fant ikke kamera eller mikrofon på enheten.");
+    }
+
+    if (errorName === "NotReadableError" || errorName === "TrackStartError") {
+      throw new Error("Kamera eller mikrofon er opptatt i en annen app.");
+    }
+
+    throw error;
+  }
 }
 
 export function createMatchStore(room, onState) {
@@ -197,7 +234,7 @@ export async function createVideoRoom({
       throw new Error(mediaSupport.message);
     }
 
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localStream = await requestLocalMedia();
   }
 
   const mediaState = {

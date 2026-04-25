@@ -21,6 +21,9 @@ const connectionCopy = document.querySelector("[data-connection-copy]");
 const countdownEl = document.querySelector("[data-countdown]");
 const winnerBanner = document.querySelector("[data-winner-banner]");
 const entryOverlay = document.querySelector("[data-entry-overlay]");
+const overlayTitle = entryOverlay?.querySelector(".join-title");
+const overlayCopy = entryOverlay?.querySelector(".join-copy");
+const sideSelectButtons = document.querySelectorAll("[data-side-select]");
 
 const sideElements = {
   blue: {
@@ -40,14 +43,55 @@ setRoomLabel(roomLabel, room);
 let selectedSide = initialSide === "green" ? "green" : "blue";
 let roomApi;
 let controlsBound = false;
+let isConnecting = false;
+let currentAttemptId = 0;
+let permissionHintTimer = null;
 
 const matchStore = createMatchStore(room, (state) => {
   renderMatchState({ state, countdownEl, bannerEl: winnerBanner, showPreselected: false });
 });
 
+function capitalize(value) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "";
+}
+
+function clearPermissionHintTimer() {
+  if (permissionHintTimer) {
+    window.clearTimeout(permissionHintTimer);
+    permissionHintTimer = null;
+  }
+}
+
+function setOverlayContent(title, copy) {
+  if (overlayTitle) {
+    overlayTitle.textContent = title;
+  }
+
+  if (overlayCopy) {
+    overlayCopy.textContent = copy;
+  }
+}
+
+function resetOverlayContent() {
+  setOverlayContent("Velg side", "Trykk på Blue eller Green for å koble deg til rommet.");
+}
+
 function showConnectionError(message) {
+  clearPermissionHintTimer();
   connectionState.textContent = "Ikke tilkoblet";
   connectionCopy.textContent = message;
+  resetOverlayContent();
+  entryOverlay?.classList.remove("hidden");
+  isConnecting = false;
+  updateSideButtons();
+}
+
+function updateSideButtons() {
+  sideSelectButtons.forEach((button) => {
+    const isActive = button.dataset.sideSelect === selectedSide;
+    button.setAttribute("aria-pressed", String(isActive));
+    button.disabled = isConnecting;
+  });
 }
 
 function setSelectedSide(side) {
@@ -55,6 +99,7 @@ function setSelectedSide(side) {
   const nextUrl = new URL(window.location.href);
   nextUrl.searchParams.set("side", selectedSide);
   window.history.replaceState({}, "", nextUrl);
+  updateSideButtons();
 }
 
 connectionState.textContent = "Laster";
@@ -70,6 +115,7 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 const mediaSupport = getMediaSupportStatus();
+const canUseMedia = mediaSupport.ok;
 if (!mediaSupport.ok) {
   showConnectionError(mediaSupport.message);
 }
@@ -87,6 +133,13 @@ function lockOpponentControls() {
   });
 }
 
+function resetPlayerControls() {
+  document.querySelectorAll("[data-slot] [data-control]").forEach((button) => {
+    button.disabled = true;
+    button.setAttribute("aria-pressed", "false");
+  });
+}
+
 function resolvePlayerDisplaySide(participant) {
   if (participant.role === "admin") {
     return selectedSide === "blue" ? "green" : "blue";
@@ -100,17 +153,47 @@ function clearPlayerStage() {
     if (video) {
       video.srcObject = null;
     }
+
     empty?.classList.remove("hidden");
+
     if (copy) {
       copy.textContent = "Venter på tilkobling";
     }
   });
 }
 
+function beginConnectionState() {
+  const readableSide = capitalize(selectedSide);
+  connectionState.textContent = "Kobler til";
+  connectionCopy.textContent = `Starter ${selectedSide}-siden i room ${room}.`;
+  setOverlayContent(
+    `Kobler til ${readableSide}`,
+    "Tillat kamera og mikrofon i nettleseren. Hvis du ikke ser et spørsmål, sjekk adressefeltet."
+  );
+  entryOverlay?.classList.remove("hidden");
+  clearPermissionHintTimer();
+  permissionHintTimer = window.setTimeout(() => {
+    if (!isConnecting) {
+      return;
+    }
+
+    connectionCopy.textContent = "Venter på svar fra kamera/mikrofon eller nettleseren.";
+    setOverlayContent(
+      `Venter på ${readableSide}`,
+      "Siden jobber fortsatt. Godkjenn kamera/mikrofon hvis nettleseren spør. Hvis ikke, last siden på nytt og prøv igjen."
+    );
+  }, 2500);
+}
+
 async function connectSelectedSide() {
-  if (!mediaSupport.ok) {
+  if (!canUseMedia || isConnecting) {
     return;
   }
+
+  currentAttemptId += 1;
+  const attemptId = currentAttemptId;
+  isConnecting = true;
+  updateSideButtons();
 
   if (roomApi) {
     roomApi.disconnect();
@@ -118,30 +201,54 @@ async function connectSelectedSide() {
     clearPlayerStage();
   }
 
-  connectionState.textContent = "Kobler til";
-  connectionCopy.textContent = `Starter ${selectedSide}-siden i room ${room}.`;
+  resetPlayerControls();
+  beginConnectionState();
 
   try {
-    roomApi = await createVideoRoom({
+    let pendingRoomApi = null;
+
+    pendingRoomApi = await createVideoRoom({
       room,
       peerId,
       role: "player",
       side: selectedSide,
       onStatus(message) {
+        if (attemptId !== currentAttemptId) {
+          return;
+        }
+
         connectionState.textContent = "Tilkoblet";
         connectionCopy.textContent = message;
       },
       onParticipantState(participants) {
+        if (attemptId !== currentAttemptId) {
+          return;
+        }
+
+        const activeRoomApi = roomApi || pendingRoomApi;
+        if (!activeRoomApi) {
+          return;
+        }
+
         renderStageStreams({
           sideElements,
           participants,
           currentSide: selectedSide,
-          roomApi,
+          roomApi: activeRoomApi,
           selfPeerId: peerId,
           resolveDisplaySide: resolvePlayerDisplaySide,
         });
       },
     });
+
+    const nextRoomApi = pendingRoomApi;
+
+    if (attemptId !== currentAttemptId) {
+      nextRoomApi.disconnect();
+      return;
+    }
+
+    roomApi = nextRoomApi;
 
     renderStageStreams({
       sideElements,
@@ -160,25 +267,43 @@ async function connectSelectedSide() {
       controlsBound = true;
     }
 
+    clearPermissionHintTimer();
     lockOpponentControls();
-
     connectionState.textContent = "Tilkoblet";
     connectionCopy.textContent = `Du er koblet til som ${selectedSide}.`;
+    resetOverlayContent();
     entryOverlay?.classList.add("hidden");
+    isConnecting = false;
+    updateSideButtons();
   } catch (error) {
+    if (attemptId !== currentAttemptId) {
+      return;
+    }
+
+    roomApi?.disconnect();
+    roomApi = null;
+    clearPlayerStage();
+    resetPlayerControls();
     showConnectionError(error?.message || "Kunne ikke starte kamera og mikrofon.");
   }
 }
 
-document.querySelectorAll("[data-side-select]").forEach((button) => {
+sideSelectButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setSelectedSide(button.dataset.sideSelect || "blue");
     connectSelectedSide();
   });
 });
 
-if (initialSide === "blue" || initialSide === "green") {
-  entryOverlay?.classList.add("hidden");
+resetPlayerControls();
+updateSideButtons();
+resetOverlayContent();
+
+if (!canUseMedia) {
+  sideSelectButtons.forEach((button) => {
+    button.disabled = true;
+  });
+} else if (initialSide === "blue" || initialSide === "green") {
   setSelectedSide(initialSide);
   connectSelectedSide();
 } else {
@@ -187,6 +312,8 @@ if (initialSide === "blue" || initialSide === "green") {
 }
 
 window.addEventListener("beforeunload", () => {
+  clearPermissionHintTimer();
+  currentAttemptId += 1;
   roomApi?.disconnect();
   matchStore.dispose();
 });
